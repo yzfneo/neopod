@@ -1,14 +1,14 @@
-# Agili 的 Hacker Podcast
+# NeoY 的 Hacker Podcast
 
 一个基于 AI 的 Hacker News 中文播客项目，每天自动抓取 Hacker News 热门文章，通过 AI 生成中文总结并转换为播客内容。
 
-[<img src="https://devin.ai/assets/deepwiki-badge.png" alt="DeepWiki" height="20"/>](https://deepwiki.com/miantiao-me/hacker-podcast)
+[<img src="https://devin.ai/assets/deepwiki-badge.png" alt="DeepWiki" height="20"/>](https://deepwiki.com/neoy/hacker-podcast)
 
 预览地址: <https://hacker-podcast.agi.li>
 
 订阅地址: [RSS](https://hacker-podcast.agi.li/rss.xml) | [Apple Podcasts](https://podcasts.apple.com/us/podcast/Hacker-Podcast/id1809638204) | [YouTube](https://www.youtube.com/@hacker-podcast-daily) | [小宇宙](https://www.xiaoyuzhoufm.com/podcast/67b06023606e5c59409cd9ba) | [Spotify](https://open.spotify.com/show/63cre75hc25H7McAY5bzyo)
 
-![hacker-podcast](https://socialify.git.ci/miantiao-me/hacker-podcast/image?description=1&forks=1&name=1&owner=1&pattern=Circuit+Board&stargazers=1&theme=Auto)
+![hacker-podcast](https://socialify.git.ci/neoy/hacker-podcast/image?description=1&forks=1&name=1&owner=1&pattern=Circuit+Board&stargazers=1&theme=Auto)
 
 ---
 
@@ -129,7 +129,7 @@ pnpm deploy
 
 1. [在 Telegram 关注我](https://t.me/miantiao_me)
 2. [在 𝕏 上关注我](https://404.li/x)
-3. [在 GitHub 赞助我](https://github.com/sponsors/miantiao-me)
+3. [在 GitHub 赞助我](https://github.com/sponsors/neoy)
 
 ## 免责声明
 

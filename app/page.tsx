@@ -5,6 +5,7 @@ import { keepDays, podcast, site } from '@/config'
 import { buildEpisodesFromArticles } from '@/lib/episodes'
 import { getPastDays } from '@/lib/utils'
 
+export const dynamic = 'force-dynamic'
 export const revalidate = 600
 
 export default async function Home({

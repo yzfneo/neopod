@@ -1,5 +1,7 @@
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
   const { path } = await params
   const { env } = await getCloudflareContext({ async: true })

@@ -1,5 +1,5 @@
 import type { WorkflowEvent, WorkflowStep, WorkflowStepConfig } from 'cloudflare:workers'
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { generateText } from 'ai'
 import { WorkflowEntrypoint } from 'cloudflare:workers'
 import { podcastTitle } from '@/config'
@@ -12,12 +12,11 @@ interface Params {
 }
 
 interface Env extends CloudflareEnv {
-  OPENAI_BASE_URL: string
-  OPENAI_API_KEY: string
-  OPENAI_MODEL: string
-  OPENAI_THINKING_MODEL?: string
-  OPENAI_MAX_TOKENS?: string
+  GOOGLE_GENERATIVE_AI_API_KEY: string
+  GOOGLE_MODEL?: string
+  GOOGLE_THINKING_MODEL?: string
   JINA_KEY?: string
+  FIRECRAWL_KEY?: string
   NODE_ENV: string
   HACKER_PODCAST_WORKER_URL: string
   HACKER_PODCAST_R2_BUCKET_URL: string
@@ -42,14 +41,15 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
     const isDev = runEnv !== 'production'
     const breakTime = isDev ? '2 seconds' : '5 seconds'
     const today = event.payload?.today || new Date().toISOString().split('T')[0]
-    const openai = createOpenAICompatible({
-      name: 'openai',
-      baseURL: this.env.OPENAI_BASE_URL!,
-      headers: {
-        Authorization: `Bearer ${this.env.OPENAI_API_KEY!}`,
-      },
+
+    // Verified: using gemini-2.5 models on v1beta
+    const google = createGoogleGenerativeAI({
+      apiKey: this.env.GOOGLE_GENERATIVE_AI_API_KEY,
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta',
     })
-    const maxTokens = Number.parseInt(this.env.OPENAI_MAX_TOKENS || '4096')
+
+    const model = google('gemini-2.5-flash')
+    const thinkingModel = google('gemini-2.5-pro')
 
     const stories = await step.do(`get top stories ${today}`, retryConfig, async () => {
       const topStories = await getHackerNewsTopStories(today, this.env)
@@ -67,16 +67,15 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     for (const story of stories) {
       const storyResponse = await step.do(`get story ${story.id}: ${story.title}`, retryConfig, async () => {
-        return await getHackerNewsStory(story, maxTokens, this.env)
+        return await getHackerNewsStory(story, 1000000, this.env)
       })
 
       console.info(`get story ${story.id} content success`)
 
       const text = await step.do(`summarize story ${story.id}: ${story.title}`, retryConfig, async () => {
         const { text, usage, finishReason } = await generateText({
-          model: openai(this.env.OPENAI_MODEL!),
-          system: summarizeStoryPrompt,
-          prompt: storyResponse,
+          model,
+          prompt: `${summarizeStoryPrompt}\n\n---\n\nInput Content:\n${storyResponse}`,
         })
 
         console.info(`get story ${story.id} summary success`, { text, usage, finishReason })
@@ -106,10 +105,8 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const podcastContent = await step.do('create podcast content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL!),
-        system: summarizePodcastPrompt,
-        prompt: allStories.join('\n\n---\n\n'),
-        maxOutputTokens: maxTokens,
+        model: thinkingModel,
+        prompt: `${summarizePodcastPrompt}\n\n---\n\nInput Stories:\n${allStories.join('\n\n---\n\n')}`,
         maxRetries: 3,
       })
 
@@ -124,10 +121,8 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const blogContent = await step.do('create blog content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL!),
-        system: summarizeBlogPrompt,
-        prompt: `<stories>${JSON.stringify(stories)}</stories>\n\n---\n\n${allStories.join('\n\n---\n\n')}`,
-        maxOutputTokens: maxTokens,
+        model: thinkingModel,
+        prompt: `${summarizeBlogPrompt}\n\n---\n\nInput Data:\n<stories>${JSON.stringify(stories)}</stories>\n\n---\n\n${allStories.join('\n\n---\n\n')}`,
         maxRetries: 3,
       })
 
@@ -142,9 +137,8 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const introContent = await step.do('create intro content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_MODEL!),
-        system: introPrompt,
-        prompt: podcastContent,
+        model,
+        prompt: `${introPrompt}\n\n---\n\nInput Podcast Content:\n${podcastContent}`,
         maxRetries: 3,
       })
 

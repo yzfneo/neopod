@@ -31,7 +31,7 @@
   "kv_namespaces": [
     {
       "binding": "HACKER_PODCAST_KV",
-      "id": "bfc65509c1634589a29b90f956ab0d1a"
+      "id": "437fecc1151947b383ad1c65bc9b8273"
     }
   ],
   "r2_buckets": [
@@ -42,6 +42,11 @@
     {
       "binding": "NEXT_INC_CACHE_R2_BUCKET",
       "bucket_name": "hacker-podcast"
+    },
+    {
+      "bucket_name": "hacker-podcast",
+      "binding": "Y",
+      "remote": true
     }
   ],
   "services": [
@@ -69,7 +74,11 @@
   "migrations": [
     {
       "tag": "open-next",
-      "new_sqlite_classes": ["DOQueueHandler", "DOShardedTagCache", "BucketCachePurge"]
+      "new_sqlite_classes": [
+        "DOQueueHandler",
+        "DOShardedTagCache",
+        "BucketCachePurge"
+      ]
     }
   ]
 }

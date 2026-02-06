@@ -20,6 +20,8 @@
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.21",
+    "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/openai-compatible": "^1.0.29",
     "@cloudflare/puppeteer": "^1.0.4",
     "@echristian/edge-tts": "^0.0.14",
@@ -27,7 +29,7 @@
     "@tanstack/react-store": "^0.8.0",
     "@tanstack/store": "^0.8.0",
     "@vidstack/react": "^1.12.13",
-    "ai": "^5.0.116",
+    "ai": "^6.0.73",
     "cheerio": "^1.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

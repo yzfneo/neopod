@@ -40,7 +40,7 @@ export default {
       })
       return new Response(file?.body)
     }
-    return Response.redirect(`https://hacker-podcast.agi.li/${pathname}`, 302)
+    return Response.redirect(`https://hacker-podcast.neoy.workers.dev${pathname}`, 302)
   },
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     return this.runWorkflow(event, env, ctx)

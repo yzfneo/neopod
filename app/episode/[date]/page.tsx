@@ -6,6 +6,7 @@ import { PodcastScaffold } from '@/components/podcast/scaffold'
 import { podcast, site } from '@/config'
 import { buildEpisodeFromArticle } from '@/lib/episodes'
 
+export const dynamic = 'force-dynamic'
 export const revalidate = 7200
 
 export async function generateMetadata({
