@@ -32,10 +32,10 @@ export async function GET() {
     itunesCategory: [{ text: 'Technology' }, { text: 'News' }],
     itunesOwner: {
       name: podcast.base.title,
-      email: 'hacker-podcast@agi.li',
+      email: 'yuanzhefang@gmail.com',
     },
-    managingEditor: 'hacker-podcast@agi.li',
-    webMaster: 'hacker-podcast@agi.li',
+    managingEditor: 'yuanzhefang@gmail.com',
+    webMaster: 'yuanzhefang@gmail.com',
   })
 
   const { env } = await getCloudflareContext({ async: true })
