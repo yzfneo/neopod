@@ -49,85 +49,133 @@ export class EdgeTTSClient {
     return new Promise((resolve, reject) => {
       const audioChunks: Uint8Array[] = []
 
-      // Use native WebSocket (no custom headers - auth is via URL params)
-      const ws = new WebSocket(url)
+      ;(async () => {
+        try {
+          // Use fetch to initiate WebSocket handshake with custom headers
+          // Note: fetch requires https:// scheme for upgrade, not wss://
+          const fetchUrl = url.replace('wss://', 'https://')
+          const response = await fetch(fetchUrl, {
+            headers: {
+              'Upgrade': 'websocket',
+              'Connection': 'Upgrade',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
+              'Origin': 'chrome-extension://jdiankhgjdiicbhfjocbfidaggkkgbeo',
+              'Pragma': 'no-cache',
+              'Cache-Control': 'no-cache',
+              'Accept-Encoding': 'gzip, deflate, br, zstd',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Sec-CH-UA': '"Chromium";v="144", "Microsoft Edge";v="144", "Not?A_Brand";v="99"',
+              'Sec-CH-UA-Mobile': '?0',
+              'Sec-CH-UA-Platform': '"Windows"',
+              'Sec-Fetch-Dest': 'empty',
+              'Sec-Fetch-Mode': 'websocket',
+              'Sec-Fetch-Site': 'cross-site',
+            },
+          })
 
-      ws.addEventListener('open', () => {
-        // Send config
-        const config = {
-          context: {
-            synthesis: {
-              audio: {
-                metadataoptions: {
-                  sentenceBoundaryEnabled: false,
-                  wordBoundaryEnabled: true,
+          if (response.status !== 101) {
+            throw new Error(`Failed to connect to Edge TTS: ${response.status} ${response.statusText}`)
+          }
+
+          const ws = response.webSocket
+          if (!ws) {
+            throw new Error('Server did not give a WebSocket')
+          }
+
+          // Accept the WebSocket to start using it
+          ws.accept()
+
+          ws.addEventListener('message', async (event) => {
+            const data = event.data
+
+            if (data instanceof ArrayBuffer) {
+              const buffer = new Uint8Array(data)
+              if (buffer.length < 2)
+                return
+
+              const headerLen = (buffer[0] << 8) | buffer[1]
+              if (buffer.length > headerLen + 2) {
+                const audioData = buffer.slice(headerLen + 2)
+                audioChunks.push(audioData)
+              }
+            }
+            else if (data instanceof Blob) {
+              // Binary data (audio)
+              const arrayBuffer = await data.arrayBuffer()
+              const buffer = new Uint8Array(arrayBuffer)
+
+              if (buffer.length < 2)
+                return
+
+              // First 2 bytes are header length (big endian)
+              const headerLen = (buffer[0] << 8) | buffer[1]
+              if (buffer.length > headerLen + 2) {
+                const audioData = buffer.slice(headerLen + 2)
+                audioChunks.push(audioData)
+              }
+            }
+            else if (typeof data === 'string') {
+              if (data.includes('turn.end')) {
+                ws.close()
+              }
+            }
+          })
+
+          ws.addEventListener('close', (event) => {
+            if (audioChunks.length > 0) {
+              // Concatenate all audio chunks
+              const totalLen = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0)
+              const result = new Uint8Array(totalLen)
+              let offset = 0
+              for (const chunk of audioChunks) {
+                result.set(chunk, offset)
+                offset += chunk.length
+              }
+              resolve(result.buffer)
+            }
+            else {
+              console.warn('WebSocket closed with no audio received. Code:', event.code)
+              if (event.code !== 1000 && event.code !== 1005) {
+                reject(new Error(`WebSocket closed code: ${event.code}`))
+              }
+              else {
+                reject(new Error('No audio received'))
+              }
+            }
+          })
+
+          ws.addEventListener('error', (event) => {
+            reject(new Error(`WebSocket error: ${event}`))
+          })
+
+          // Use custom logic to handle open event since ws.accept() happened
+          // Send config immediately
+          const config = {
+            context: {
+              synthesis: {
+                audio: {
+                  metadataoptions: {
+                    sentenceBoundaryEnabled: false,
+                    wordBoundaryEnabled: true,
+                  },
+                  outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
                 },
-                outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
               },
             },
-          },
-        }
-
-        const configMsg = `X-Timestamp:${this.getTimestamp()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n${JSON.stringify(config)}`
-        ws.send(configMsg)
-
-        // Send SSML
-        const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='${voice}'><prosody pitch='+0Hz' rate='${rate}' volume='+0%'>${text}</prosody></voice></speak>`
-        const ssmlMsg = `X-RequestId:${this.generateRequestId()}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${this.getTimestamp()}Z\r\nPath:ssml\r\n\r\n${ssml}`
-        ws.send(ssmlMsg)
-      })
-
-      ws.addEventListener('message', async (event) => {
-        const data = event.data
-
-        if (data instanceof Blob) {
-          // Binary data (audio)
-          const arrayBuffer = await data.arrayBuffer()
-          const buffer = new Uint8Array(arrayBuffer)
-
-          if (buffer.length < 2)
-            return
-
-          // First 2 bytes are header length (big endian)
-          const headerLen = (buffer[0] << 8) | buffer[1]
-          if (buffer.length > headerLen + 2) {
-            const audioData = buffer.slice(headerLen + 2)
-            audioChunks.push(audioData)
           }
-        }
-        else if (typeof data === 'string') {
-          if (data.includes('turn.end')) {
-            ws.close()
-          }
-        }
-      })
 
-      ws.addEventListener('close', (event) => {
-        if (audioChunks.length > 0) {
-          // Concatenate all audio chunks
-          const totalLen = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0)
-          const result = new Uint8Array(totalLen)
-          let offset = 0
-          for (const chunk of audioChunks) {
-            result.set(chunk, offset)
-            offset += chunk.length
-          }
-          resolve(result.buffer)
-        }
-        else {
-          console.warn('WebSocket closed with no audio received. Code:', event.code)
-          if (event.code !== 1000 && event.code !== 1005) {
-            reject(new Error(`WebSocket closed code: ${event.code}`))
-          }
-          else {
-            reject(new Error('No audio received'))
-          }
-        }
-      })
+          const configMsg = `X-Timestamp:${this.getTimestamp()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n${JSON.stringify(config)}`
+          ws.send(configMsg)
 
-      ws.addEventListener('error', (event) => {
-        reject(new Error(`WebSocket error: ${event}`))
-      })
+          // Send SSML
+          const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='${voice}'><prosody pitch='+0Hz' rate='${rate}' volume='+0%'>${text}</prosody></voice></speak>`
+          const ssmlMsg = `X-RequestId:${this.generateRequestId()}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${this.getTimestamp()}Z\r\nPath:ssml\r\n\r\n${ssml}`
+          ws.send(ssmlMsg)
+        }
+        catch (err) {
+          reject(err)
+        }
+      })()
     })
   }
 }
