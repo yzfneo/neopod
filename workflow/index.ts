@@ -5,7 +5,7 @@ import { WorkflowEntrypoint } from 'cloudflare:workers'
 import { podcastTitle } from '@/config'
 import { introPrompt, summarizeBlogPrompt, summarizePodcastPrompt, summarizeStoryPrompt } from './prompt'
 import synthesize from './tts'
-import { concatAudioFiles, getHackerNewsStory, getHackerNewsTopStories } from './utils'
+import { getHackerNewsStory, getHackerNewsTopStories } from './utils'
 
 interface Params {
   today?: string
@@ -34,6 +34,11 @@ const retryConfig: WorkflowStepConfig = {
 }
 
 export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
+  constructor(ctx: ExecutionContext, env: Env) {
+    super(ctx, env)
+    console.info('VERSION: SINGLE_REQUEST_AUDIO_V2')
+  }
+
   async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
     console.info('trigged event: HackerNewsWorkflow', event)
 
@@ -58,7 +63,9 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
         throw new Error('no stories found')
       }
 
-      topStories.length = Math.min(topStories.length, isDev ? 1 : 10)
+      // Limit stories to 5 in production to stay under 50 subrequest limit
+      // Each story uses ~5+ subrequests (2 fetch + 1 LLM + 1 KV put + 1 KV get)
+      topStories.length = Math.min(topStories.length, isDev ? 1 : 5)
 
       return topStories
     })
@@ -150,59 +157,38 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
     const contentKey = `content:${runEnv}:hacker-podcast:${today}`
     const podcastKey = `${today.replaceAll('-', '/')}/${runEnv}/hacker-podcast-${today}.mp3`
 
-    const conversations = podcastContent.split('\n').filter(Boolean)
-
-    for (const [index, conversation] of conversations.entries()) {
-      await step.do(`create audio ${index}: ${conversation.substring(0, 20)}...`, { ...retryConfig, timeout: '5 minutes' }, async () => {
-        if (
-          !(conversation.startsWith('男') || conversation.startsWith('女'))
-          || !conversation.substring(2).trim()
-        ) {
-          console.warn('conversation is not valid', conversation)
-          return conversation
+    // Single-pass audio generation (Mono-speaker) per user request
+    const fullText = podcastContent.split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        // Remove speaker prefixes if present
+        if (line.startsWith('男：') || line.startsWith('女：')) {
+          return line.substring(2)
         }
-
-        console.info('create conversation audio', conversation)
-        const audio = await synthesize(conversation.substring(2), conversation[0], this.env)
-
-        if (!audio.size) {
-          throw new Error('podcast audio size is 0')
-        }
-
-        const audioKey = `tmp/${podcastKey}-${index}.mp3`
-        const audioUrl = `${this.env.HACKER_PODCAST_R2_BUCKET_URL}/${audioKey}?t=${Date.now()}`
-
-        await this.env.HACKER_PODCAST_R2.put(audioKey, audio)
-
-        this.env.HACKER_PODCAST_KV.put(`tmp:${event.instanceId}:audio:${index}`, audioUrl, { expirationTtl: 3600 })
-        return audioUrl
+        return line
       })
-    }
+      .join('\n\n')
 
-    const audioFiles = await step.do('collect all audio files', retryConfig, async () => {
-      const audioUrls: string[] = []
-      for (const [index] of conversations.entries()) {
-        const audioUrl = await this.env.HACKER_PODCAST_KV.get(`tmp:${event.instanceId}:audio:${index}`)
-        if (audioUrl) {
-          audioUrls.push(audioUrl)
-        }
-      }
-      return audioUrls
-    })
+    await step.do('create full podcast audio', { ...retryConfig, timeout: '15 minutes' }, async () => {
+      console.info('generating full podcast audio')
+      const audio = await synthesize(fullText, '男', this.env)
 
-    await step.do('concat audio files', retryConfig, async () => {
-      if (!this.env.BROWSER) {
-        console.warn('browser is not configured, skip concat audio files')
-        return
+      if (!audio.size) {
+        throw new Error('podcast audio size is 0')
       }
 
-      const blob = await concatAudioFiles(audioFiles, this.env.BROWSER, { workerUrl: this.env.HACKER_PODCAST_WORKER_URL })
-      await this.env.HACKER_PODCAST_R2.put(podcastKey, blob)
-
-      const podcastAudioUrl = `${this.env.HACKER_PODCAST_R2_BUCKET_URL}/${podcastKey}?t=${Date.now()}`
-      console.info('podcast audio url', podcastAudioUrl)
-      return podcastAudioUrl
+      await this.env.HACKER_PODCAST_R2.put(podcastKey, audio)
+      console.info('full podcast audio saved to R2', podcastKey)
+      return podcastKey
     })
+
+    // Skip concatenation as we now generate a single file
+    console.info('skipping audio concatenation (single file generated)')
+    const podcastAudioUrl = `${this.env.HACKER_PODCAST_R2_BUCKET_URL}/${podcastKey}?t=${Date.now()}`
+    console.info('podcast audio url', podcastAudioUrl)
+    // The previous `return podcastAudioUrl` was part of a dangling `step.do` call.
+    // The actual return for the audio generation is `podcastKey` above.
+    // This line is now just a log and variable assignment.
 
     console.info('save podcast to r2 success')
 
@@ -232,24 +218,19 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
         deletePromises.push(this.env.HACKER_PODCAST_KV.delete(storyKey))
       }
 
-      // Clean up audio temporary data
-      for (const [index] of conversations.entries()) {
-        const audioKey = `tmp:${event.instanceId}:audio:${index}`
-        deletePromises.push(this.env.HACKER_PODCAST_KV.delete(audioKey))
-      }
-
       await Promise.all(deletePromises).catch(console.error)
 
-      for (const index of audioFiles.keys()) {
-        try {
-          await Promise.any([
-            this.env.HACKER_PODCAST_R2.delete(`tmp/${podcastKey}-${index}.mp3`),
-            new Promise(resolve => setTimeout(resolve, 200)),
-          ])
+      // Clean up potential temporary audio files in R2 (Insurance for legacy or unexpected files)
+      try {
+        const tmpPrefix = `tmp/${today.replaceAll('-', '/')}/${runEnv}/`
+        const objects = await this.env.HACKER_PODCAST_R2.list({ prefix: tmpPrefix })
+        for (const obj of objects.objects) {
+          await this.env.HACKER_PODCAST_R2.delete(obj.key)
+          console.info('deleted temp R2 file:', obj.key)
         }
-        catch (error) {
-          console.error('delete temp files failed', error)
-        }
+      }
+      catch (error) {
+        console.error('cleanup R2 temp files failed', error)
       }
 
       return 'temporary data cleaned up'

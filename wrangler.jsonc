@@ -27,26 +27,33 @@
   "placement": {
     "mode": "smart"
   },
+  "vars": {
+    "NEXT_STATIC_HOST": "https://hacker-podcast-worker.neoy.workers.dev/static"
+  },
   "keep_vars": true,
   "kv_namespaces": [
     {
       "binding": "HACKER_PODCAST_KV",
-      "id": "437fecc1151947b383ad1c65bc9b8273"
+      "id": "437fecc1151947b383ad1c65bc9b8273",
+      "preview_id": "d24c6d78b98c4f2cb31cc00ef74b01d9"
     }
   ],
   "r2_buckets": [
     {
       "binding": "HACKER_PODCAST_R2",
-      "bucket_name": "hacker-podcast"
+      "bucket_name": "hacker-podcast",
+      "preview_bucket_name": "hacker-podcast-preview"
     },
     {
       "binding": "NEXT_INC_CACHE_R2_BUCKET",
-      "bucket_name": "hacker-podcast"
+      "bucket_name": "hacker-podcast",
+      "preview_bucket_name": "hacker-podcast-preview"
     },
     {
       "bucket_name": "hacker-podcast",
       "binding": "Y",
-      "remote": true
+      "remote": true,
+      "preview_bucket_name": "hacker-podcast-preview"
     }
   ],
   "services": [
