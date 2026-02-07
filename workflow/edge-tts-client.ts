@@ -1,13 +1,14 @@
-import { Buffer } from 'node:buffer'
-import crypto from 'node:crypto'
-import WebSocket from 'ws'
+/**
+ * Custom EdgeTTS client for Cloudflare Workers
+ * Uses native WebSocket and WebCrypto APIs
+ */
 
 export class EdgeTTSClient {
   private readonly TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4'
   private readonly WSS_URL = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1'
   private readonly SEC_MS_GEC_VERSION = '1-144.0.3719.115'
 
-  private async generateAnitAbuseToken(): Promise<string> {
+  private async generateAntiAbuseToken(): Promise<string> {
     const WIN_EPOCH = 11644473600
     const S_TO_NS = 1e9
 
@@ -17,8 +18,14 @@ export class EdgeTTSClient {
     ticks *= S_TO_NS / 100
 
     const strToHash = `${ticks.toFixed(0)}${this.TRUSTED_CLIENT_TOKEN}`
-    const hash = crypto.createHash('sha256').update(strToHash).digest('hex').toUpperCase()
-    return hash
+
+    // Use WebCrypto API (compatible with CF Workers)
+    const encoder = new TextEncoder()
+    const data = encoder.encode(strToHash)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
+    return hashHex
   }
 
   private generateConnectionId(): string {
@@ -33,33 +40,19 @@ export class EdgeTTSClient {
     return new Date().toISOString()
   }
 
-  async synthesize(text: string, voice: string = 'zh-CN-XiaoxiaoNeural', rate: string = '10%'): Promise<Buffer> {
+  async synthesize(text: string, voice: string = 'zh-CN-XiaoxiaoNeural', rate: string = '10%'): Promise<ArrayBuffer> {
     const connectionId = this.generateConnectionId()
-    const secMsGec = await this.generateAnitAbuseToken()
+    const secMsGec = await this.generateAntiAbuseToken()
 
     const url = `${this.WSS_URL}?TrustedClientToken=${this.TRUSTED_CLIENT_TOKEN}&ConnectionId=${connectionId}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${this.SEC_MS_GEC_VERSION}`
 
     return new Promise((resolve, reject) => {
-      const audioChunks: Buffer[] = []
+      const audioChunks: Uint8Array[] = []
 
-      const ws = new WebSocket(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
-          'Origin': 'chrome-extension://jdiankhgjdiicbhfjocbfidaggkkgbeo',
-          'Pragma': 'no-cache',
-          'Cache-Control': 'no-cache',
-          'Accept-Encoding': 'gzip, deflate, br, zstd',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Sec-CH-UA': '"Chromium";v="144", "Microsoft Edge";v="144", "Not?A_Brand";v="99"',
-          'Sec-CH-UA-Mobile': '?0',
-          'Sec-CH-UA-Platform': '"Windows"',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'websocket',
-          'Sec-Fetch-Site': 'cross-site',
-        },
-      })
+      // Use native WebSocket (no custom headers - auth is via URL params)
+      const ws = new WebSocket(url)
 
-      ws.on('open', () => {
+      ws.addEventListener('open', () => {
         // Send config
         const config = {
           context: {
@@ -84,47 +77,56 @@ export class EdgeTTSClient {
         ws.send(ssmlMsg)
       })
 
-      ws.on('message', (data, isBinary) => {
-        if (isBinary) {
-          // Binary data is likely audio
-          const buffer = data as Buffer
-          // Check for header length (first 2 bytes, big endian)
+      ws.addEventListener('message', async (event) => {
+        const data = event.data
+
+        if (data instanceof Blob) {
+          // Binary data (audio)
+          const arrayBuffer = await data.arrayBuffer()
+          const buffer = new Uint8Array(arrayBuffer)
+
           if (buffer.length < 2)
             return
 
-          const headerLen = buffer.readUInt16BE(0)
+          // First 2 bytes are header length (big endian)
+          const headerLen = (buffer[0] << 8) | buffer[1]
           if (buffer.length > headerLen + 2) {
-            const audioData = buffer.subarray(headerLen + 2)
+            const audioData = buffer.slice(headerLen + 2)
             audioChunks.push(audioData)
           }
         }
-        else {
-          const msg = data.toString()
-          if (msg.includes('turn.end')) {
+        else if (typeof data === 'string') {
+          if (data.includes('turn.end')) {
             ws.close()
           }
         }
       })
 
-      ws.on('close', (code) => {
+      ws.addEventListener('close', (event) => {
         if (audioChunks.length > 0) {
-          resolve(Buffer.concat(audioChunks))
+          // Concatenate all audio chunks
+          const totalLen = audioChunks.reduce((acc, chunk) => acc + chunk.length, 0)
+          const result = new Uint8Array(totalLen)
+          let offset = 0
+          for (const chunk of audioChunks) {
+            result.set(chunk, offset)
+            offset += chunk.length
+          }
+          resolve(result.buffer)
         }
         else {
-          console.warn('WebSocket closed with no audio received. Code:', code)
-          // If it was a normal closure but no audio (maybe short text?), we might resolve empty or reject.
-          // 403 would have triggered 'error' event usually or immediate close.
-          if (code !== 1000 && code !== 1005 && code !== 1006) { // 1006 is abnormal, but sometimes happens at end
-            reject(new Error(`WebSocket closed code: ${code}`))
+          console.warn('WebSocket closed with no audio received. Code:', event.code)
+          if (event.code !== 1000 && event.code !== 1005) {
+            reject(new Error(`WebSocket closed code: ${event.code}`))
           }
-          else if (audioChunks.length === 0) {
+          else {
             reject(new Error('No audio received'))
           }
         }
       })
 
-      ws.on('error', (err) => {
-        reject(err)
+      ws.addEventListener('error', (event) => {
+        reject(new Error(`WebSocket error: ${event}`))
       })
     })
   }

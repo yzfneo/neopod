@@ -34,10 +34,7 @@ async function edgeTTS(text: string, gender: string, env: Env) {
     'EdgeTTS timeout after 60s',
   )
 
-  // Return audio buffer (Blob isn't directly returned by client but needed by caller?)
-  // The original code returned `audio` property which was likely a Blob or Buffer.
-  // Let's assume the caller expects a Blob or Buffer. The previous implementation returned `r.audio` from `synthesize`.
-  // Looking at lines 73 and 101, other providers return a Blob. Let's return a Blob here too for consistency.
+  // EdgeTTSClient now returns ArrayBuffer (compatible with CF Workers)
   return new Blob([audioBuffer], { type: 'audio/mpeg' })
 }
 

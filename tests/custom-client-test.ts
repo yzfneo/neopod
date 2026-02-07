@@ -14,10 +14,10 @@ async function testCustomClient() {
     const duration = Date.now() - startTime
 
     console.log(`✅ Success! Duration: ${duration}ms`)
-    console.log(`Audio size: ${audioBuffer.length} bytes`)
+    console.log(`Audio size: ${audioBuffer.byteLength} bytes`)
 
-    if (audioBuffer.length > 0) {
-      await fs.writeFile('tests/final-output.mp3', audioBuffer)
+    if (audioBuffer.byteLength > 0) {
+      await fs.writeFile('tests/final-output.mp3', new Uint8Array(audioBuffer))
       console.log('Saved to tests/final-output.mp3')
     }
     else {
