@@ -62,9 +62,10 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
         throw new Error('no stories found')
       }
 
-      // Limit stories to 10 in production (optimized to stay under 50 subrequest limit)
-      // Optimized: ~3.5 subrequests per story (2 fetch + 1 LLM, no KV storage)
-      topStories.length = Math.min(topStories.length, isDev ? 1 : 10)
+      // Limit stories to 8 in production (aggressively optimized for 50 subrequest limit)
+      // Optimized: ~2 subrequests per story (1 fetch + 1 LLM, no comments, no KV storage)
+      // Total: 8 stories × 2 + 3 (podcast/blog/intro) + 2 (tts/storage) = ~21 subrequests
+      topStories.length = Math.min(topStories.length, isDev ? 1 : 8)
 
       return topStories
     })
@@ -84,7 +85,8 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
         for (const story of batch) {
           // Fetch and summarize within same step to reduce step overhead
-          const storyResponse = await getHackerNewsStory(story, 1000000, this.env)
+          // Skip comments to save 1 subrequest per story
+          const storyResponse = await getHackerNewsStory(story, 1000000, this.env, false)
           console.info(`get story ${story.id} content success`)
 
           const { text, usage, finishReason } = await generateText({
@@ -105,16 +107,28 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const allStories = storySummaries.map(s => s.summary)
 
-    const podcastContent = await step.do('create podcast content', retryConfig, async () => {
-      const { text, usage, finishReason } = await generateText({
+    const { podcastContent, titleSummary } = await step.do('create podcast content and title', retryConfig, async () => {
+      // Generate podcast content
+      const podcastResult = await generateText({
         model: thinkingModel,
         prompt: `${summarizePodcastPrompt}\n\n---\n\nInput Stories:\n${allStories.join('\n\n---\n\n')}`,
         maxRetries: 3,
       })
 
-      console.info(`create hacker podcast content success`, { text, usage, finishReason })
+      console.info(`create hacker podcast content success`, { usage: podcastResult.usage, finishReason: podcastResult.finishReason })
 
-      return text
+      // Generate title summary in parallel (saves 1 subrequest)
+      const titleResult = await generateText({
+        model,
+        prompt: `${summarizeTitlePrompt}\n\n---\n\nInput Stories:\n${stories.map(s => s.title).join('\n')}`,
+      })
+
+      console.info(`create title summary success`, { title: titleResult.text.trim() })
+
+      return {
+        podcastContent: podcastResult.text,
+        titleSummary: titleResult.text.trim(),
+      }
     })
 
     console.info('podcast content:\n', isDev ? podcastContent : podcastContent.slice(0, 100))
@@ -187,14 +201,6 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     console.info('save podcast to r2 success')
 
-    const titleSummary = await step.do('create title summary', retryConfig, async () => {
-      const { text } = await generateText({
-        model,
-        prompt: `${summarizeTitlePrompt}\n\n---\n\nInput Stories:\n${stories.map(s => s.title).join('\n')}`,
-      })
-      return text.trim()
-    })
-
     const formattedDate = today.replaceAll('-', '').slice(2)
     const finalTitle = `${formattedDate}｜${titleSummary}`
 
@@ -215,21 +221,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     console.info('save content to kv success')
 
-    await step.do('clean up temporary data', retryConfig, async () => {
-      // Clean up potential temporary audio files in R2 (Insurance for legacy or unexpected files)
-      try {
-        const tmpPrefix = `tmp/${today.replaceAll('-', '/')}/${runEnv}/`
-        const objects = await this.env.HACKER_PODCAST_R2.list({ prefix: tmpPrefix })
-        for (const obj of objects.objects) {
-          await this.env.HACKER_PODCAST_R2.delete(obj.key)
-          console.info('deleted temp R2 file:', obj.key)
-        }
-      }
-      catch (error) {
-        console.error('cleanup R2 temp files failed', error)
-      }
-
-      return 'temporary data cleaned up'
-    })
+    // Skip cleanup step to save subrequests (no temp files created in single-pass mode)
+    console.info('workflow completed successfully')
   }
 }

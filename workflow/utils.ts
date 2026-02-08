@@ -84,7 +84,12 @@ export async function getHackerNewsTopStories(today: string, { JINA_KEY, FIRECRA
   return stories.filter(story => story.id && story.url)
 }
 
-export async function getHackerNewsStory(story: Story, maxTokens: number, { JINA_KEY, FIRECRAWL_KEY }: { JINA_KEY?: string, FIRECRAWL_KEY?: string }) {
+export async function getHackerNewsStory(
+  story: Story,
+  maxTokens: number,
+  { JINA_KEY, FIRECRAWL_KEY }: { JINA_KEY?: string, FIRECRAWL_KEY?: string },
+  includeComments: boolean = false,
+) {
   const headers: HeadersInit = {
     'X-Retain-Images': 'none',
   }
@@ -93,41 +98,42 @@ export async function getHackerNewsStory(story: Story, maxTokens: number, { JINA
     headers.Authorization = `Bearer ${JINA_KEY}`
   }
 
-  const [article, comments] = await Promise.all([
+  // Only fetch comments if explicitly requested (saves 1 subrequest per story)
+  const fetches: Promise<string>[] = [
     getContentFromJina(story.url!, 'markdown', {}, JINA_KEY)
       .catch((error) => {
         console.error('getHackerNewsStory from Jina failed', error)
         return getContentFromFirecrawl(story.url!, 'markdown', {}, FIRECRAWL_KEY)
       }),
-    getContentFromJina(`https://news.ycombinator.com/item?id=${story.id}`, 'markdown', { include: '.comment-tree', exclude: '.navs' }, JINA_KEY)
-      .catch((error) => {
-        console.error('getHackerNewsStory from Jina failed', error)
-        return getContentFromFirecrawl(`https://news.ycombinator.com/item?id=${story.id}`, 'markdown', { include: '.comment-tree', exclude: '.navs' }, FIRECRAWL_KEY)
-      }),
-  ])
-  return [
-    story.title
-      ? `
-<title>
-${story.title}
-</title>
-`
-      : '',
-    article
-      ? `
-<article>
-${article.substring(0, maxTokens * 5)}
-</article>
-`
-      : '',
-    comments
-      ? `
-<comments>
-${comments.substring(0, maxTokens * 5)}
-</comments>
-`
-      : '',
-  ].filter(Boolean).join('\n\n---\n\n')
+  ]
+
+  if (includeComments) {
+    fetches.push(
+      getContentFromJina(`https://news.ycombinator.com/item?id=${story.id}`, 'markdown', { include: '.comment-tree', exclude: '.navs' }, JINA_KEY)
+        .catch((error) => {
+          console.error('getHackerNewsStory comments from Jina failed', error)
+          return getContentFromFirecrawl(`https://news.ycombinator.com/item?id=${story.id}`, 'markdown', { include: '.comment-tree', exclude: '.navs' }, FIRECRAWL_KEY)
+        }),
+    )
+  }
+
+  const [article, comments] = await Promise.all(fetches)
+
+  const parts: string[] = []
+
+  if (story.title) {
+    parts.push(`<title>\n${story.title}\n</title>`)
+  }
+
+  if (article) {
+    parts.push(`<article>\n${article.substring(0, maxTokens * 5)}\n</article>`)
+  }
+
+  if (includeComments && comments) {
+    parts.push(`<comments>\n${comments.substring(0, maxTokens * 5)}\n</comments>`)
+  }
+
+  return parts.join('\n\n---\n\n')
 }
 
 export async function concatAudioFiles(audioFiles: string[], BROWSER: Fetcher, { workerUrl }: { workerUrl: string }) {
