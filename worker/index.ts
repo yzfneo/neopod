@@ -3,6 +3,7 @@ export * from '../workflow'
 interface Env extends CloudflareEnv {
   HACKER_PODCAST_WORKFLOW: Workflow
   BROWSER: Fetcher
+  ASSETS: Fetcher
 }
 
 export default {
@@ -31,6 +32,14 @@ export default {
       // curl -X POST http://localhost:8787
       return this.runWorkflow(request, env, ctx)
     }
+    // 尝试从 ASSETS 获取静态文件 (logo.png, favicon.ico 等)
+    if (pathname === '/logo.png' || pathname === '/favicon.ico' || pathname.startsWith('/og-') || pathname.startsWith('/tw-')) {
+      const assetResponse = await env.ASSETS.fetch(request)
+      if (assetResponse.status === 200) {
+        return assetResponse
+      }
+    }
+
     if (pathname.includes('/static')) {
       const filename = pathname.replace('/static/', '')
       const file = await env.HACKER_PODCAST_R2.get(filename)
