@@ -23,7 +23,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string)
 
 async function edgeTTS(text: string, gender: string, env: Env) {
   const client = new EdgeTTSClient()
-  const voice = gender === '男' ? (env.MAN_VOICE_ID || 'zh-CN-YunyangNeural') : (env.WOMAN_VOICE_ID || 'zh-CN-XiaoxiaoNeural')
+  const voice = gender === '男' ? (env.MAN_VOICE_ID || 'zh-TW-YunJheNeural') : (env.WOMAN_VOICE_ID || 'zh-CN-XiaoxiaoNeural')
   const rate = env.AUDIO_SPEED || '10%'
 
   console.info(`Synthesizing with EdgeTTSClient: voice=${voice}, rate=${rate}`)
