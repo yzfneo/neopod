@@ -2,8 +2,7 @@ import type { WorkflowEvent, WorkflowStep, WorkflowStepConfig } from 'cloudflare
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { generateText } from 'ai'
 import { WorkflowEntrypoint } from 'cloudflare:workers'
-import { podcastTitle } from '@/config'
-import { introPrompt, summarizeBlogPrompt, summarizePodcastPrompt, summarizeStoryPrompt } from './prompt'
+import { introPrompt, summarizeBlogPrompt, summarizePodcastPrompt, summarizeStoryPrompt, summarizeTitlePrompt } from './prompt'
 import synthesize from './tts'
 import { getHackerNewsStory, getHackerNewsTopStories } from './utils'
 
@@ -63,52 +62,48 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
         throw new Error('no stories found')
       }
 
-      // Limit stories to 5 in production to stay under 50 subrequest limit
-      // Each story uses ~5+ subrequests (2 fetch + 1 LLM + 1 KV put + 1 KV get)
-      topStories.length = Math.min(topStories.length, isDev ? 1 : 5)
+      // Limit stories to 10 in production (optimized to stay under 50 subrequest limit)
+      // Optimized: ~3.5 subrequests per story (2 fetch + 1 LLM, no KV storage)
+      topStories.length = Math.min(topStories.length, isDev ? 1 : 10)
 
       return topStories
     })
 
     console.info('top stories', isDev ? stories : JSON.stringify(stories))
 
-    for (const story of stories) {
-      const storyResponse = await step.do(`get story ${story.id}: ${story.title}`, retryConfig, async () => {
-        return await getHackerNewsStory(story, 1000000, this.env)
+    // Batch process stories in groups to reduce step overhead
+    const BATCH_SIZE = 3
+    const storySummaries: { id: string, summary: string }[] = []
+
+    for (let i = 0; i < stories.length; i += BATCH_SIZE) {
+      const batch = stories.slice(i, i + BATCH_SIZE)
+      const batchIndex = Math.floor(i / BATCH_SIZE)
+
+      const batchSummaries = await step.do(`process stories batch ${batchIndex + 1}`, retryConfig, async () => {
+        const summaries: { id: string, summary: string }[] = []
+
+        for (const story of batch) {
+          // Fetch and summarize within same step to reduce step overhead
+          const storyResponse = await getHackerNewsStory(story, 1000000, this.env)
+          console.info(`get story ${story.id} content success`)
+
+          const { text, usage, finishReason } = await generateText({
+            model,
+            prompt: `${summarizeStoryPrompt}\n\n---\n\nInput Content:\n${storyResponse}`,
+          })
+
+          console.info(`get story ${story.id} summary success`, { usage, finishReason })
+          summaries.push({ id: story.id!, summary: `<story>${text}</story>` })
+        }
+
+        return summaries
       })
 
-      console.info(`get story ${story.id} content success`)
-
-      const text = await step.do(`summarize story ${story.id}: ${story.title}`, retryConfig, async () => {
-        const { text, usage, finishReason } = await generateText({
-          model,
-          prompt: `${summarizeStoryPrompt}\n\n---\n\nInput Content:\n${storyResponse}`,
-        })
-
-        console.info(`get story ${story.id} summary success`, { text, usage, finishReason })
-        return text
-      })
-
-      await step.do(`store story ${story.id} summary`, retryConfig, async () => {
-        const storyKey = `tmp:${event.instanceId}:story:${story.id}`
-        await this.env.HACKER_PODCAST_KV.put(storyKey, `<story>${text}</story>`, { expirationTtl: 3600 })
-        return storyKey
-      })
-
+      storySummaries.push(...batchSummaries)
       await step.sleep('Give AI a break', breakTime)
     }
 
-    const allStories = await step.do('collect all story summaries', retryConfig, async () => {
-      const summaries: string[] = []
-      for (const story of stories) {
-        const storyKey = `tmp:${event.instanceId}:story:${story.id}`
-        const summary = await this.env.HACKER_PODCAST_KV.get(storyKey)
-        if (summary) {
-          summaries.push(summary)
-        }
-      }
-      return summaries
-    })
+    const allStories = storySummaries.map(s => s.summary)
 
     const podcastContent = await step.do('create podcast content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
@@ -192,10 +187,21 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     console.info('save podcast to r2 success')
 
+    const titleSummary = await step.do('create title summary', retryConfig, async () => {
+      const { text } = await generateText({
+        model,
+        prompt: `${summarizeTitlePrompt}\n\n---\n\nInput Stories:\n${stories.map(s => s.title).join('\n')}`,
+      })
+      return text.trim()
+    })
+
+    const formattedDate = today.replaceAll('-', '').slice(2)
+    const finalTitle = `${formattedDate}｜${titleSummary}`
+
     await step.do('save content to kv', retryConfig, async () => {
       await this.env.HACKER_PODCAST_KV.put(contentKey, JSON.stringify({
         date: today,
-        title: `${podcastTitle} ${today}`,
+        title: finalTitle,
         stories,
         podcastContent,
         blogContent,
@@ -210,16 +216,6 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
     console.info('save content to kv success')
 
     await step.do('clean up temporary data', retryConfig, async () => {
-      const deletePromises = []
-
-      // Clean up story temporary data
-      for (const story of stories) {
-        const storyKey = `tmp:${event.instanceId}:story:${story.id}`
-        deletePromises.push(this.env.HACKER_PODCAST_KV.delete(storyKey))
-      }
-
-      await Promise.all(deletePromises).catch(console.error)
-
       // Clean up potential temporary audio files in R2 (Insurance for legacy or unexpected files)
       try {
         const tmpPrefix = `tmp/${today.replaceAll('-', '/')}/${runEnv}/`
