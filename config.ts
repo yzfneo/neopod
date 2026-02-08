@@ -62,7 +62,7 @@ export const site: Site = {
     siteName: defaultTitle,
     defaultTitle,
     defaultDescription,
-    defaultImage: '/opengraph-image.png',
+    defaultImage: '/og-image.png',
     twitterHandle: '',
     locale: 'zh_CN',
   },
