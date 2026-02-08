@@ -167,10 +167,9 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
     const podcastKey = `${today.replaceAll('-', '/')}/${runEnv}/hacker-podcast-${today}.mp3`
 
     // Single-pass audio generation (Mono-speaker) per user request
-    // Limit to ~2000 chars to stay under EdgeTTS 10-minute limit
-    // (Chinese speech ~200-250 chars/min, 10 min = 2000-2500 chars)
+    // AI prompt now asks for 2000 chars max, but we keep this as safety check
     const MAX_TTS_CHARS = 2000
-    let fullText = podcastContent.split('\n')
+    const fullText = podcastContent.split('\n')
       .filter(Boolean)
       .map((line) => {
         // Remove speaker prefixes if present
@@ -182,8 +181,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
       .join('\n\n')
 
     if (fullText.length > MAX_TTS_CHARS) {
-      console.warn(`Text too long (${fullText.length} chars), truncating to ${MAX_TTS_CHARS} chars`)
-      fullText = fullText.substring(0, MAX_TTS_CHARS)
+      console.warn(`Text unexpectedly long (${fullText.length} chars), consider adjusting prompt`)
     }
 
     await step.do('create full podcast audio', { ...retryConfig, timeout: '15 minutes' }, async () => {
