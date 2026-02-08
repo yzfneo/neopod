@@ -62,10 +62,10 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
         throw new Error('no stories found')
       }
 
-      // Limit stories to 8 in production (aggressively optimized for 50 subrequest limit)
+      // Limit stories to 10 for variety, with concise but substantive coverage
       // Optimized: ~2 subrequests per story (1 fetch + 1 LLM, no comments, no KV storage)
-      // Total: 8 stories × 2 + 3 (podcast/blog/intro) + 2 (tts/storage) = ~21 subrequests
-      topStories.length = Math.min(topStories.length, isDev ? 1 : 8)
+      // Total: 10 stories × 2 + 3 (podcast/blog/intro) + 2 (tts/storage) = ~25 subrequests
+      topStories.length = Math.min(topStories.length, isDev ? 1 : 10)
 
       return topStories
     })
