@@ -30,8 +30,8 @@ async function edgeTTS(text: string, gender: string, env: Env) {
 
   const audioBuffer = await withTimeout(
     client.synthesize(text, voice, rate),
-    60000,
-    'EdgeTTS timeout after 60s',
+    180000,
+    'EdgeTTS timeout after 180s',
   )
 
   // EdgeTTSClient now returns ArrayBuffer (compatible with CF Workers)
