@@ -3,7 +3,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 import markdownit from 'markdown-it'
 import { NextResponse } from 'next/server'
 import { Podcast } from 'podcast'
-import { podcast } from '@/config'
+import { keepDays, podcast } from '@/config'
 import { getPastDays } from '@/lib/utils'
 
 const md = markdownit()
@@ -40,7 +40,7 @@ export async function GET() {
 
   const { env } = await getCloudflareContext({ async: true })
   const runEnv = env.NODE_ENV || 'production'
-  const pastDays = getPastDays(10)
+  const pastDays = getPastDays(keepDays)
   const posts = (await Promise.all(
     pastDays.map(async (day) => {
       const post = await env.HACKER_PODCAST_KV.get(`content:${runEnv}:hacker-podcast:${day}`, 'json')

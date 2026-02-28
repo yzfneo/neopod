@@ -6,7 +6,7 @@ const defaultDescription
   = '一个Hacker News 中文播客项目，每天自动抓取 Hacker News 热门文章，总结并转换为播客内容。'
 const defaultBaseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://hacker-podcast.neoy.workers.dev'
 
-export const keepDays = 30
+export const keepDays = 120
 
 export const podcast: Podcast = {
   base: {
