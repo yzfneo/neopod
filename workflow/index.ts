@@ -184,7 +184,14 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
       console.warn(`Text unexpectedly long (${fullText.length} chars), consider adjusting prompt`)
     }
 
-    await step.do('create full podcast audio', { ...retryConfig, timeout: '15 minutes' }, async () => {
+    await step.do('create full podcast audio', {
+      retries: {
+        limit: 10,
+        delay: '30 seconds',
+        backoff: 'exponential',
+      },
+      timeout: '15 minutes',
+    }, async () => {
       console.info('generating full podcast audio')
       const audio = await synthesize(fullText, '男', this.env)
 
